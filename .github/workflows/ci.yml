@@ -50,6 +50,8 @@ jobs:
           $got = carbium --version
           if ($got -ne $want) { throw "carbium --version printed '$got', not $want" }
           # Windows on Arm runs the x64 exe too, so the version alone does not show which entry Scoop installed
-          $arch = (Get-Content (Join-Path $env:USERPROFILE 'scoop\apps\carbium\current\install.json') -Raw | ConvertFrom-Json).architecture
+          # Scoop's install record, read as Scoop reads it: scoop-install.json, install.json in older versions
+          $info = 'scoop-install.json', 'install.json' | ForEach-Object { Join-Path $env:USERPROFILE "scoop\apps\carbium\current\$_" } | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $arch = (Get-Content $info -Raw | ConvertFrom-Json).architecture
           $wantArch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { '64bit' }
           if ($arch -ne $wantArch) { throw "Scoop installed the $arch entry, not $wantArch" }
