@@ -1,0 +1,55 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  manifest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends python3-jsonschema
+      - run: python3 -I scripts/check-manifest.py bucket/carbium.json
+      - name: npm text holding a control byte is shown escaped
+        run: |
+          printf '{"latest":"0.1.0\\u001b[31m"}' > "$RUNNER_TEMP/tags"
+          python3 -I scripts/check-manifest.py --dist-tags "$RUNNER_TEMP/tags" bucket/carbium.json > "$RUNNER_TEMP/out" 2>&1 || :
+          grep -qF "npm's latest is '0.1.0" "$RUNNER_TEMP/out"
+          if LC_ALL=C grep -q "$(printf '\033')" "$RUNNER_TEMP/out"; then echo "a raw escape byte reached the output"; exit 1; fi
+  install:
+    # A real install as a user makes it: Scoop from its installer (pinned by commit and SHA-256; the installer itself
+    # fetches Scoop's current release), this checkout added as the bucket, carbium installed from the manifest with its
+    # hash checked by Scoop, then run. x64 and arm64 take the manifest's two architectures.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: install Scoop
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'install.ps1'
+          Invoke-WebRequest -UseBasicParsing -OutFile $installer -Uri 'https://raw.githubusercontent.com/ScoopInstaller/Install/1e2f334083d609986d8c8bc9e31ae8e87c39fab4/install.ps1'
+          if ((Get-FileHash -Algorithm SHA256 $installer).Hash -ne '94F983B190438311E006B957DB7C8422709E0BA62A6C2AC04E278164108F2512') { throw 'the Scoop installer is not the pinned one' }
+          & $installer -RunAsAdmin
+          Join-Path $env:USERPROFILE 'scoop\shims' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: install carbium from this bucket and run it
+        shell: pwsh
+        run: |
+          # a file:/// URL, which Scoop's bucket URL check and git both take; a bare Windows path fails that check
+          scoop bucket add carbium ('file:///' + ($env:GITHUB_WORKSPACE -replace '\\', '/'))
+          scoop install carbium/carbium
+          $want = (Get-Content bucket/carbium.json -Raw | ConvertFrom-Json).version
+          $got = carbium --version
+          if ($got -ne $want) { throw "carbium --version printed '$got', not $want" }
+          # Windows on Arm runs the x64 exe too, so the version alone does not show which entry Scoop installed
+          $arch = (Get-Content (Join-Path $env:USERPROFILE 'scoop\apps\carbium\current\install.json') -Raw | ConvertFrom-Json).architecture
+          $wantArch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { '64bit' }
+          if ($arch -ne $wantArch) { throw "Scoop installed the $arch entry, not $wantArch" }

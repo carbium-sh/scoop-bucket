@@ -1,0 +1,36 @@
+# Scoop's own checkver and autoupdate move bucket/carbium.json to the carbium release npm calls latest (it moves only
+# after a cli release passes carbium-js's release checks) and commit it with the job token. The check job then fails the
+# run when the manifest is not that release or its hashes differ from the release's SHA256SUMS.
+name: Excavator
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '20 6 * * *'
+permissions: {}
+jobs:
+  excavate:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # the Scoop action sets its own push URL with the job token
+      - uses: ScoopInstaller/GithubActions@5bceeda181721d9d10a18fdcc3ddca6f33467ae6 # v3.0.0
+        env:
+          SKIP_UPDATED: 1
+          THROW_ERROR: 1
+  check:
+    needs: excavate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: false
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends python3-jsonschema
+      - run: python3 -I scripts/check-manifest.py --live bucket/carbium.json
